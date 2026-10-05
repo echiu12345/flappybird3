@@ -29,12 +29,13 @@ class DQNAgent:
         gamma=0.99,
         memory_size=50000,
         tau=0.005,  # Soft update parameter
+        device_name=None,
     ):
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.gamma = gamma
         self.tau = tau
-        self.device = device
+        self.device = torch.device(device_name) if device_name is not None else device
 
         # Policy network (used to select actions and learn)
         self.policy_dqn = DQN(state_dim, action_dim, hidden_dim).to(self.device)
@@ -66,10 +67,11 @@ class DQNAgent:
 
     def step(self, state, action, reward, next_state, terminated):
         """
-        Saves experience in replay memory and trains policy net.
+        Saves a transition. Only true termination disables bootstrapping.
         """
         # Append transition to memory
-        self.memory.append((state, action, reward, next_state, terminated))
+        self.memory.append((np.array(state, copy=True), action, reward,
+                            np.array(next_state, copy=True), terminated))
 
     def optimize(self, batch_size):
         """
@@ -140,5 +142,17 @@ class DQNAgent:
         """
         Loads the policy network parameters and syncs the target network.
         """
-        self.policy_dqn.load_state_dict(torch.load(filepath, map_location=self.device))
+        self.policy_dqn.load_state_dict(torch.load(filepath, map_location=self.device, weights_only=True))
         self.target_dqn.load_state_dict(self.policy_dqn.state_dict())
+
+    @classmethod
+    def from_checkpoint(cls, filepath, device_name=None):
+        """Infer network dimensions from this project's saved weight files."""
+        weights = torch.load(filepath, map_location="cpu", weights_only=True)
+        hidden_dim, state_dim = weights["model.0.weight"].shape
+        action_dim = weights["model.4.weight"].shape[0]
+        agent = cls(state_dim, action_dim, hidden_dim=hidden_dim, device_name=device_name)
+        agent.policy_dqn.load_state_dict(weights)
+        agent.target_dqn.load_state_dict(weights)
+        agent.policy_dqn.eval()
+        return agent
